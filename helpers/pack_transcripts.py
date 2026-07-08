@@ -35,6 +35,35 @@ def format_duration(seconds: float) -> str:
     return f"{m}m {s:04.1f}s"
 
 
+def _is_cjk(ch: str) -> bool:
+    return any([
+        "\u4e00" <= ch <= "\u9fff",
+        "\u3040" <= ch <= "\u30ff",
+        "\uac00" <= ch <= "\ud7af",
+    ])
+
+
+def join_token_text(parts: list[str]) -> str:
+    """Join ASR tokens without adding spaces between CJK character tokens."""
+    out = ""
+    no_space_before = set(",.!?;:%)]}，。！？；：、）】》")
+    no_space_after = set("([{（【《")
+    for raw in parts:
+        token = raw.strip()
+        if not token:
+            continue
+        if not out:
+            out = token
+            continue
+        prev = out[-1]
+        first = token[0]
+        if first in no_space_before or prev in no_space_after or (_is_cjk(prev) and _is_cjk(first)):
+            out += token
+        else:
+            out += " " + token
+    return out
+
+
 def group_into_phrases(
     words: list[dict],
     silence_threshold: float = 0.5,
@@ -70,8 +99,7 @@ def group_into_phrases(
             current_start = None
             current_speaker = None
             return
-        text = " ".join(text_parts)
-        text = text.replace(" ,", ",").replace(" .", ".").replace(" ?", "?").replace(" !", "!")
+        text = join_token_text(text_parts)
         end_time = current_words[-1].get("end", current_words[-1].get("start", current_start or 0.0))
         phrases.append({
             "start": current_start,

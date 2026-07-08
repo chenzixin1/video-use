@@ -1,12 +1,13 @@
 """Batch-transcribe every video in a directory with 4 parallel workers.
 
-Walks <videos_dir> for common video extensions, runs ElevenLabs Scribe on
-each, writes transcripts to <videos_dir>/edit/transcripts/<name>.json.
+Walks <videos_dir> for common video extensions, runs the selected ASR provider
+on each, writes transcripts to <videos_dir>/edit/transcripts/<name>.json.
 
 Cached per-file: any source that already has a transcript is skipped.
 
 Usage:
     python helpers/transcribe_batch.py <videos_dir>
+    python helpers/transcribe_batch.py <videos_dir> --provider volcengine
     python helpers/transcribe_batch.py <videos_dir> --workers 4
     python helpers/transcribe_batch.py <videos_dir> --num-speakers 2
     python helpers/transcribe_batch.py <videos_dir> --edit-dir /custom/edit
@@ -15,6 +16,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -45,6 +47,12 @@ def main() -> None:
     )
     ap.add_argument("--workers", type=int, default=4, help="Parallel workers (default: 4)")
     ap.add_argument(
+        "--provider",
+        choices=["elevenlabs", "volcengine"],
+        default=os.environ.get("TRANSCRIBE_PROVIDER", "elevenlabs"),
+        help="ASR provider (default: TRANSCRIBE_PROVIDER or elevenlabs)",
+    )
+    ap.add_argument(
         "--language",
         type=str,
         default=None,
@@ -56,6 +64,7 @@ def main() -> None:
         default=None,
         help="Optional number of speakers. Improves diarization when known.",
     )
+    ap.add_argument("--force", action="store_true", help="Overwrite existing cached transcripts")
     args = ap.parse_args()
 
     videos_dir = args.videos_dir.resolve()
@@ -69,7 +78,9 @@ def main() -> None:
     if not videos:
         sys.exit(f"no videos found in {videos_dir}")
 
-    already_cached = [v for v in videos if (edit_dir / "transcripts" / f"{v.stem}.json").exists()]
+    already_cached = [] if args.force else [
+        v for v in videos if (edit_dir / "transcripts" / f"{v.stem}.json").exists()
+    ]
     pending = [v for v in videos if v not in already_cached]
 
     print(f"found {len(videos)} videos ({len(already_cached)} cached, {len(pending)} to transcribe)")
@@ -77,9 +88,9 @@ def main() -> None:
         print("nothing to do")
         return
 
-    api_key = load_api_key()
+    api_key = load_api_key() if args.provider == "elevenlabs" else None
 
-    print(f"transcribing {len(pending)} files with {args.workers} parallel workers")
+    print(f"transcribing {len(pending)} files with {args.workers} parallel workers via {args.provider}")
     t0 = time.time()
 
     errors: list[tuple[Path, str]] = []
@@ -90,8 +101,10 @@ def main() -> None:
                 video=v,
                 edit_dir=edit_dir,
                 api_key=api_key,
+                provider=args.provider,
                 language=args.language,
                 num_speakers=args.num_speakers,
+                force=args.force,
                 verbose=False,
             ): v
             for v in pending

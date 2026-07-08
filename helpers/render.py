@@ -297,6 +297,35 @@ def _srt_timestamp(seconds: float) -> str:
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
+def _is_cjk(ch: str) -> bool:
+    return any([
+        "\u4e00" <= ch <= "\u9fff",
+        "\u3040" <= ch <= "\u30ff",
+        "\uac00" <= ch <= "\ud7af",
+    ])
+
+
+def _join_token_text(parts: list[str]) -> str:
+    """Join ASR tokens without adding spaces between CJK character tokens."""
+    out = ""
+    no_space_before = set(",.!?;:%)]}，。！？；：、）】》")
+    no_space_after = set("([{（【《")
+    for raw in parts:
+        token = raw.strip()
+        if not token:
+            continue
+        if not out:
+            out = token
+            continue
+        prev = out[-1]
+        first = token[0]
+        if first in no_space_before or prev in no_space_after or (_is_cjk(prev) and _is_cjk(first)):
+            out += token
+        else:
+            out += " " + token
+    return out
+
+
 def _words_in_range(transcript: dict, t_start: float, t_end: float) -> list[dict]:
     out: list[dict] = []
     for w in transcript.get("words", []):
@@ -363,7 +392,7 @@ def build_master_srt(edl: dict, edit_dir: Path, out_path: Path) -> None:
             out_end = max(0.0, local_end - seg_start) + seg_offset
             if out_end <= out_start:
                 out_end = out_start + 0.4
-            text = " ".join((w.get("text") or "").strip() for w in chunk)
+            text = _join_token_text([(w.get("text") or "").strip() for w in chunk])
             text = re.sub(r"\s+", " ", text).strip()
             # Strip trailing punctuation for cleaner uppercase look
             text = text.rstrip(",;:")
